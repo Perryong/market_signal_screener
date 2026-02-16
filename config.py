@@ -81,3 +81,20 @@ DIVERGENCE_CONFIG = {
     "lookback_period": 14,
     "min_peaks": 2,
 }
+
+# TradingAgents LLM-based analysis configuration
+TRADING_AGENTS_CONFIG = {
+    "enabled": False,  # Set to False to disable TradingAgents analysis, True to enable
+    "debug": False,  # Enable debug mode for TradingAgents
+    "save_full_trace": True,  # Save full agent conversation trace to JSON files
+    "selected_analysts": ["market", "social", "news", "fundamentals"],  # Analyst types to include
+    "max_debate_rounds": 1,  # Number of debate rounds between bull/bear researchers
+    "deep_think_llm": "gpt-4o-mini",  # LLM for deep thinking (research manager, risk manager)
+    "quick_think_llm": "gpt-4o-mini",  # LLM for quick thinking (analysts, researchers)
+    "data_vendors": {
+        "core_stock_apis": "yfinance",  # Options: yfinance, alpha_vantage, local
+        "technical_indicators": "yfinance",  # Options: yfinance, alpha_vantage, local
+        "fundamental_data": "alpha_vantage",  # Options: openai, alpha_vantage, local
+        "news_data": "alpha_vantage",  # Options: openai, alpha_vantage, google, local
+    },
+}

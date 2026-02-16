@@ -15,6 +15,12 @@ from engine import generate_signal
 from indicators.index import prepare_indicators
 from previews.verbose import print_signals_multi_tf
 from visualizations import plot_comprehensive_analysis
+from trading_agents_integration import (
+    initialize_trading_agents,
+    analyze_with_trading_agents,
+    format_trading_agents_signal
+)
+from config import TRADING_AGENTS_CONFIG
 
 sg_tickers = [
 
@@ -28,7 +34,6 @@ us_tickers = [
     "GOOGL",
     "NVDA",
     "AMZN",
-
     "META",
 ]
 
@@ -388,6 +393,44 @@ def main():
                         "Please create a .env file with your API key.")
     av_provider = AlphaVantageProvider(api_key=api_key)
 
+    # Initialize TradingAgentsGraph if enabled
+    ta_graph = None
+    if TRADING_AGENTS_CONFIG.get("enabled", True):
+        print("\n" + "="*60)
+        print("Initializing TradingAgents LLM framework...")
+        print("="*60)
+        try:
+            ta_config = {
+                "deep_think_llm": TRADING_AGENTS_CONFIG.get("deep_think_llm", "gpt-4o-mini"),
+                "quick_think_llm": TRADING_AGENTS_CONFIG.get("quick_think_llm", "gpt-4o-mini"),
+                "max_debate_rounds": TRADING_AGENTS_CONFIG.get("max_debate_rounds", 1),
+                "data_vendors": TRADING_AGENTS_CONFIG.get("data_vendors", {
+                    "core_stock_apis": "yfinance",
+                    "technical_indicators": "yfinance",
+                    "fundamental_data": "alpha_vantage",
+                    "news_data": "alpha_vantage",
+                }),
+            }
+            print(f"Configuration: {TRADING_AGENTS_CONFIG.get('selected_analysts', [])} analysts")
+            ta_graph = initialize_trading_agents(
+                config=ta_config,
+                debug=TRADING_AGENTS_CONFIG.get("debug", False),
+                selected_analysts=TRADING_AGENTS_CONFIG.get("selected_analysts", ["market", "social", "news", "fundamentals"])
+            )
+            if ta_graph:
+                print("✓ TradingAgents initialized successfully.")
+                print("="*60 + "\n")
+            else:
+                print("✗ Warning: TradingAgents initialization failed. Continuing with technical analysis only.")
+                print("="*60 + "\n")
+        except Exception as e:
+            print(f"✗ Error during TradingAgents initialization: {e}")
+            print("Continuing with technical analysis only.")
+            print("="*60 + "\n")
+            ta_graph = None
+    else:
+        print("TradingAgents is disabled in config. Running technical analysis only.\n")
+
     for tickers in [sg_tickers, us_tickers]:
         # Use Alpha Vantage for US tickers, yfinance for Singapore tickers
         use_alphavantage = tickers == us_tickers
@@ -580,12 +623,60 @@ def main():
                     atr=sig_weekly.atr,
                 )
 
+                # Run TradingAgents LLM analysis if enabled
+                ta_signal = None
+                if ta_graph is not None:
+                    try:
+                        # Get latest date from daily data
+                        # Handle both DatetimeIndex and Date column cases
+                        if isinstance(prep_daily_df.index, pd.DatetimeIndex):
+                            latest_date = prep_daily_df.index[-1].strftime("%Y-%m-%d")
+                        elif 'Date' in prep_daily_df.columns:
+                            # Date is in a column (after reset_index)
+                            latest_date = pd.to_datetime(prep_daily_df['Date'].iloc[-1]).strftime("%Y-%m-%d")
+                        else:
+                            # Try to get from the original dataframe before prepare_df
+                            # Fallback: use today's date minus 1 day (to ensure it's a past date)
+                            from datetime import datetime, timedelta
+                            latest_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+                            print(f"Warning: Could not extract date from DataFrame for {ticker}, using {latest_date}")
+                        
+                        print(f"Running TradingAgents analysis for {ticker} on {latest_date}...")
+                        
+                        # Run TradingAgents analysis
+                        save_trace = TRADING_AGENTS_CONFIG.get("save_full_trace", True)
+                        ta_state, ta_decision = analyze_with_trading_agents(
+                            ticker, latest_date, ta_graph, save_full_trace=save_trace
+                        )
+                        
+                        print(f"TradingAgents decision for {ticker}: {ta_decision}")
+                        
+                        # Format TradingAgents signal
+                        ta_signal = format_trading_agents_signal(
+                            ticker, ta_decision, ta_state, short_name
+                        )
+                        
+                        # Fill in missing data from technical analysis
+                        ta_signal.entry_range = combined.entry_range
+                        ta_signal.last_close = combined.last_close
+                        ta_signal.atr = combined.atr
+                        
+                    except Exception as e:
+                        print(f"Warning: TradingAgents analysis failed for {ticker}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        ta_signal = None
+                else:
+                    if TRADING_AGENTS_CONFIG.get("enabled", True):
+                        print(f"Warning: TradingAgents graph not initialized, skipping LLM analysis for {ticker}")
+
                 results.append({
                     "daily": sig_daily,
                     "weekly": sig_weekly,
                     "4h": sig_4h,
                     "1h": sig_1h,
-                    "combined": combined
+                    "combined": combined,
+                    "trading_agents": ta_signal
                 })
                 
                 # Generate visualizations for daily timeframe
